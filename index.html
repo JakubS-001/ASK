@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>ADuC842 Emulator</title>
+    <style>
+        body { font-family: monospace; background-color: #1e1e1e; color: #d4d4d4; margin: 0; padding: 20px; display: flex; gap: 20px; flex-wrap: wrap; }
+        .panel { background-color: #252526; padding: 15px; border-radius: 5px; border: 1px solid #3c3c3c; }
+        .editor-panel { flex: 2; display: flex; flex-direction: column; }
+        textarea { 
+            width: 100%; flex: 1; background-color: #1e1e1e; color: #d4d4d4; 
+            border: 1px solid #3c3c3c; padding: 10px; font-family: 'Consolas', 'Monaco', monospace; 
+            resize: none; min-height: 450px; line-height: 1.4; white-space: pre; overflow-x: auto;
+        }
+        textarea::selection { background: #264f78; color: white; }
+        .controls { margin: 10px 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .speed-control { display: flex; align-items: center; gap: 10px; background: #333; padding: 5px 10px; border-radius: 3px; }
+        button { background-color: #0e639c; color: white; border: none; padding: 8px 15px; cursor: pointer; border-radius: 3px; }
+        button:hover { background-color: #1177bb; }
+        button:disabled { background-color: #4d4d4d; }
+        .state-panel { flex: 1; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 12px; }
+        th, td { border: 1px solid #3c3c3c; padding: 6px; text-align: left; }
+        th { background-color: #333; }
+        #log { height: 100px; overflow-y: auto; background: #000; padding: 5px; font-size: 11px; color: #888; border: 1px solid #3c3c3c; }
+        
+        .hw-panel { background: #000; padding: 15px; border-radius: 5px; border: 2px solid #444; margin-bottom: 15px; }
+        .display-container { display: flex; justify-content: center; gap: 8px; }
+        .digit-box { background: #111; border: 1px solid #222; padding: 5px; text-align: center; width: 55px; }
+        .digit { font-size: 32px; font-weight: bold; color: #400; }
+        .digit.active { color: #f00; text-shadow: 0 0 10px #f00; }
+        .dot { color: #400; }
+        .dot.active { color: #f00; text-shadow: 0 0 10px #f00; }
+        
+        .led-panel { display: flex; align-items: center; justify-content: center; gap: 15px; background: #000; padding: 10px; border: 2px solid #444; border-radius: 5px; }
+        .led { width: 25px; height: 25px; border-radius: 50%; background-color: #300; border: 2px solid #555; transition: 0.1s; }
+        .led.on { background-color: #f00; box-shadow: 0 0 15px #f00; border-color: #f99; }
+        
+        .footer { width: 100%; text-align: center; color: #666; font-size: 12px; padding: 20px 0; border-top: 1px solid #333; margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="panel editor-panel">
+    <h2>Kod źródłowy ADuC842</h2>
+    <textarea id="code" spellcheck="false">
+$mod842
+org 0
+
+mov r4, #0          ; tysiące
+mov r5, #0          ; setki
+mov r6, #0          ; dziesiątki
+mov r7, #0          ; jednostki
+mov r0, #50         ; licznik odświeżeń
+
+petla:
+
+; Wyświetlacz 3 (Tysiące)
+mov a, r4
+orl a, #30h
+mov p2, a
+call delay
+
+; Wyświetlacz 2 (Setki)
+mov a, r5
+orl a, #20h
+mov p2, a
+call delay
+
+; Wyświetlacz 1 (Dziesiątki)
+mov a, r6
+orl a, #10h
+mov p2, a
+call delay
+
+; Wyświetlacz 0 (Jednostki)
+mov a, r7
+orl a, #00h
+mov p2, a
+call delay
+
+; Logika licznika
+djnz r0, petla
+mov r0, #50
+
+inc r7
+cjne r7, #10, petla
+mov r7, #0
+inc r6
+cjne r6, #10, petla
+mov r6, #0
+inc r5
+cjne r5, #10, petla
+mov r5, #0
+inc r4
+cjne r4, #10, petla
+mov r4, #0
+sjmp petla
+
+
+delay: 
+mov r1, #10
+dly0: 
+mov r2, #01bh
+dly1: 
+mov r3, #0ffh
+djnz r3, $          
+djnz r2, dly1
+djnz r1, dly0       
+ret
+
+end</textarea>
+    <div class="controls">
+        <button onclick="compile()">Kompiluj i Reset</button>
+        <button id="stepBtn" onclick="step()" disabled>Krok</button>
+        <button id="runBtn" onclick="toggleRun()" disabled>Start/Stop</button>
+        <div class="speed-control">
+            <span>Prędkość:</span>
+            <input type="range" id="speedRange" min="-10" max="200" value="100">
+            <span id="speedVal">100</span>
+        </div>
+    </div>
+    <div id="log"></div>
+</div>
+
+<div class="panel state-panel">
+    <div class="hw-panel">
+        <div class="display-container">
+            <div class="digit-box"><div class="digit" id="dig-3">0<span class="dot" id="dot-3">.</span></div></div>
+            <div class="digit-box"><div class="digit" id="dig-2">0<span class="dot" id="dot-2">.</span></div></div>
+            <div class="digit-box"><div class="digit" id="dig-1">0<span class="dot" id="dot-1">.</span></div></div>
+            <div class="digit-box"><div class="digit" id="dig-0">0<span class="dot" id="dot-0">.</span></div></div>
+        </div>
+    </div>
+    <div class="led-panel">
+        <span>DIODA LED (P3.4):</span>
+        <div id="led-p34" class="led"></div>
+    </div>
+
+    <button onclick="toggleBtn()">PRZYCISK (P2.7)</button>
+
+    <h3>Stan CPU</h3>
+    <table>
+        <tr><th>PC / SP</th><td id="reg-PC">0</td><td id="reg-SP">7</td></tr>
+        <tr><th>ACC / B</th><td id="reg-A">0</td><td id="reg-B">0</td></tr>
+        <tr><th>Port P2 (hex/bin)</th><td colspan="2" id="port-P2">00h (00000000b)</td></tr>
+        <tr><th>Port P3 (hex/bin)</th><td colspan="2" id="port-P3">00h (00000000b)</td></tr>
+    </table>
+    <table>
+        <tr><th>R0</th><td id="reg-R0">0</td><th>R4</th><td id="reg-R4">0</td></tr>
+        <tr><th>R1</th><td id="reg-R1">0</td><th>R5</th><td id="reg-R5">0</td></tr>
+        <tr><th>R2</th><td id="reg-R2">0</td><th>R6</th><td id="reg-R6">0</td></tr>
+        <tr><th>R3</th><td id="reg-R3">0</td><th>R7</th><td id="reg-R7">0</td></tr>
+    </table>
+</div>
+
+<div class="footer">
+    Autor: Jakub Stasierski 163992, strona w budowie, poprawność nie gwarantowana.
+</div>
+
+<script>
+let buttonPressed = false;
+
+function toggleBtn() {
+    buttonPressed = !buttonPressed;
+}
+    let currentOrg = 0;
+    let state = { 
+    pc: 0, sp: 7, acc: 0, b: 0,
+    bits: new Array(8).fill(0),
+    regs: [0,0,0,0,0,0,0,0],
+    ports: { P2: 0, P3: 0xFF },
+    dotStates: [false, false, false, false],
+    stack: [],
+    program: [],
+    lineMap: [],
+    labels: {},
+    equs: {},
+    running: false,
+
+    timers: {
+        T0: { TL: 0, TH: 0, TF: 0, TR: 0, mode: 1, counter: 0 }
+    },
+    IE: 0
+};
+    let runTimeout;
+
+    function log(m) { 
+        const l = document.getElementById('log');
+        l.innerHTML += `> ${m}<br>`;
+        l.scrollTop = l.scrollHeight;
+    }
+
+    document.getElementById('speedRange').oninput = function() { document.getElementById('speedVal').innerText = this.value; };
+
+    function highlightLine(lineIndex) {
+        const textarea = document.getElementById('code');
+        const lines = textarea.value.split('\n');
+        if (lineIndex < 0 || lineIndex >= lines.length) return;
+        let startPos = 0;
+        for (let i = 0; i < lineIndex; i++) startPos += lines[i].length + 1;
+        let endPos = startPos + lines[lineIndex].length;
+        textarea.focus();
+        textarea.setSelectionRange(startPos, endPos);
+        
+        const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight);
+        textarea.scrollTop = (lineIndex * lineHeight) - (textarea.clientHeight / 2);
+    }
+
+    function compile() {
+    if(state.running) toggleRun();
+    // Inicjalizacja pamięci jako tablicy o stałym rozmiarze (np. 1024 bajty dla potrzeb demo)
+    state = { 
+        pc: 0, sp: 7, acc: 0, b: 0, regs: [0,0,0,0,0,0,0,0], 
+        bits: new Array(256).fill(0), // Dodano obsługę bitów
+        ports: { P2: 0, P3: 0xFF }, dotStates: [false, false, false, false], 
+        stack: [], program: new Array(1024).fill(null), // Stała wielkość
+        lineMap: new Array(1024).fill(undefined), labels: {}, equs: {}, running: false,
+        IE: 0, timers: { T0: { TL: 0, TH: 0, TF: 0, TR: 0, mode: 1, counter: 0 } }
+    };
+
+    const rawLines = document.getElementById('code').value.split('\n');
+    let currentAddr = 0;
+
+    rawLines.forEach((line, index) => {
+        let commentSplit = line.split(';')[0].trim();
+        if (!commentSplit || commentSplit.startsWith('$')) return;
+
+        // Obsługa EQU
+        if (commentSplit.toUpperCase().includes(' EQU ')) {
+            let parts = commentSplit.split(/ EQU /i);
+            state.equs[parts[0].trim().toUpperCase()] = parts[1].trim().toUpperCase();
+            return;
+        }
+
+        // Obsługa ORG
+        if (commentSplit.toLowerCase().startsWith('org')) {
+            let val = commentSplit.split(/\s+/)[1];
+            currentAddr = parseInt(val.replace('h',''), val.endsWith('h') ? 16 : 10);
+            return;
+        }
+
+        // Obsługa Etykiet
+        if (commentSplit.includes(':')) {
+            let [label, instr] = commentSplit.split(':');
+            state.labels[label.trim().toUpperCase()] = currentAddr;
+            commentSplit = instr ? instr.trim() : "";
+        }
+
+        if (commentSplit && commentSplit.toLowerCase() !== 'end') {
+            state.program[currentAddr] = commentSplit;
+            state.lineMap[currentAddr] = index;
+            currentAddr++;
+        }
+    });
+
+    log("Skompilowano pomyślnie.");
+    updateUI();
+    document.getElementById('stepBtn').disabled = false;
+    document.getElementById('runBtn').disabled = false;
+}
+
+    function resolveParam(p) {
+        if (!p) return "";
+        p = p.toUpperCase().replace(',', '');
+        return state.equs[p] || p;
+    }
+
+function getBit(address) {
+    address = resolveParam(address); // np. LED -> P3.4
+
+    // Specjalne aliasy
+    if (address === "P3.4") return (state.ports.P3 & 0x10) !== 0;
+    if (address === "P2.7") return !buttonPressed;
+
+    // Bit w przestrzeni bitów (0-127)
+    if (!isNaN(address)) {
+        let bitNum = parseInt(address);
+        if (bitNum >= 0 && bitNum < 128) return state.bits[bitNum] === 1;
+    }
+
+    return false;
+}
+
+function setBit(address, val) {
+    address = resolveParam(address);
+
+    // Specjalne aliasy
+    if (address === "P3.4") {
+        if (val) state.ports.P3 |= 0x10;
+        else state.ports.P3 &= ~0x10;
+        return;
+    }
+
+    // Bit w przestrzeni bitów (0-127)
+    if (!isNaN(address)) {
+        let bitNum = parseInt(address);
+        if (bitNum >= 0 && bitNum < 128) state.bits[bitNum] = val ? 1 : 0;
+        return;
+    }
+}
+
+
+    function getValue(op) {
+    op = resolveParam(op);
+    
+    if (op.startsWith('#')) {
+        let str = op.substring(1).trim();
+        let isHex = /h$/i.test(str);           // obsługa zarówno h jak i H
+        let numStr = str.replace(/h$/i, '');   // usuń h/H
+        let base = isHex ? 16 : 10;
+        return parseInt(numStr, base) & 0xFF;
+    }
+    
+    if (op === 'A') return state.acc;
+    if (op.startsWith('R')) return state.regs[parseInt(op[1])];
+    if (op === 'P2') return state.ports.P2;
+    if (op === 'P3') return state.ports.P3;
+    return 0;
+}
+
+    function setValue(op, val) {
+        val &= 0xFF;
+        op = resolveParam(op);
+        if (op === 'A') state.acc = val;
+        else if (op.startsWith('R')) state.regs[parseInt(op[1])] = val;
+        else if (op === 'P2') {
+            state.ports.P2 = val;
+            const sel = (val >> 4) & 0x03;
+            state.dotStates[sel] = (val & 0x40) !== 0;
+        }
+        else if (op === 'P3') state.ports.P3 = val;
+    }
+
+    function step() {
+	while (state.pc < state.program.length && !state.program[state.pc]) {
+        state.pc++;
+    }
+
+
+        if (state.pc >= state.program.length) { 
+            if(state.running) toggleRun(); 
+            log("Koniec programu."); return; 
+        }
+        
+        const currentLineInEditor = state.lineMap[state.pc];
+        if (typeof currentLineInEditor !== 'undefined' && !state.running) {
+             highlightLine(currentLineInEditor);
+        }
+
+        const raw = state.program[state.pc];
+        const tokens = raw.split(/[\s,]+/).filter(t => t);
+        if (tokens.length === 0) { state.pc++; return; }
+        
+        const cmd = tokens[0].toUpperCase();
+        let nextPc = state.pc + 1;
+
+        switch(cmd) {
+            case 'MOV':
+    if (tokens[1].toUpperCase() === 'TMOD') {
+        state.timers.T0.mode = getValue(tokens[2]) & 0x03;
+    } else if (tokens[1].toUpperCase() === 'IE') {
+        state.IE = getValue(tokens[2]);
+    } else {
+        setValue(tokens[1], getValue(tokens[2]));
+    }
+    break;
+            case 'INC': setValue(tokens[1], getValue(tokens[1]) + 1); break;
+            case 'ORL': setValue(tokens[1], getValue(tokens[1]) | getValue(tokens[2])); break;
+case 'JB': {
+    let bit = tokens[1];
+    let label = tokens[2].toUpperCase();
+
+    if (getBit(bit)) {
+        nextPc = state.labels[label];
+    }
+    break;
+}
+
+            case 'CPL':
+    if (tokens[1].toUpperCase() === 'TR0') {
+        state.timers.T0.TR ^= 1;
+    } else {
+        let v = getBit(tokens[1]) ? 0 : 1;
+        setBit(tokens[1], v);
+    }
+    break;
+case 'RETI':
+    if (state.stack.length > 0) {
+        nextPc = state.stack.pop();   // ← teraz używamy nextPc jak w RET i CALL
+        state.sp--;
+    }
+    break;
+case 'ADD': {
+    let val = getValue(tokens[2]);
+    let result = getValue(tokens[1]) + val;
+    setValue(tokens[1], result & 0xFF);
+    break;
+}
+                        case 'JMP':
+            case 'LJMP':
+            case 'SJMP':
+                let target = tokens[1].toUpperCase();
+                if (target === '$') {
+                    nextPc = state.pc;
+                } else if (state.labels[target] !== undefined) {
+                    nextPc = state.labels[target];
+                } else {
+                    log("BŁĄD: Etykieta nie istnieje: " + tokens[1]);
+                    if(state.running) toggleRun(); 
+                    return;
+                }
+                break;
+            case 'CALL':
+            case 'LCALL': 
+                if (tokens[1] && state.labels[tokens[1].toUpperCase()] !== undefined) {
+                    state.stack.push(nextPc); state.sp++; 
+                    nextPc = state.labels[tokens[1].toUpperCase()]; 
+                } break;
+            case 'RET': 
+                if (state.stack.length > 0) { nextPc = state.stack.pop(); state.sp--; }
+                else { log("BŁĄD: RET przy pustym stosie!"); if(state.running) toggleRun(); return; }
+                break;
+case 'SETB':
+    if (tokens[1].toUpperCase() === 'TR0') state.timers.T0.TR = 1;
+    else setBit(tokens[1], true);
+    break;
+
+case 'CLR':
+    if (tokens[1].toUpperCase() === 'TR0') state.timers.T0.TR = 0;
+    else setBit(tokens[1], false);
+    break;
+            case 'DJNZ':
+                let v = getValue(tokens[1]) - 1; setValue(tokens[1], v);
+                if (v !== 0) {
+                    let target = tokens[2].toUpperCase();
+                    nextPc = (target === '$') ? state.pc : state.labels[target];
+                }
+                break;
+            case 'CJNE': if (getValue(tokens[1]) !== getValue(tokens[2])) nextPc = state.labels[tokens[3].toUpperCase()]; break;
+        }
+        state.pc = nextPc;
+	handleTimer();
+	handleInterrupts();
+        updateUI();
+    }
+
+//function handleTimer() {
+    //let t = state.timers.T0;
+   // if (!t.TR) return;
+//
+ //   t.counter++;
+//
+//    if (t.counter >= 50) { // regulujesz szybkość
+//        t.counter = 0;
+//        t.TF = 1;
+ //   }
+//}
+
+let lastTime = performance.now();
+
+function handleTimer() {
+    let t = state.timers.T0;
+    if (!t.TR) return;
+
+    const now = performance.now();
+    const dt = now - lastTime; // czas w ms od ostatniego kroku
+    lastTime = now;
+
+    t.counter += dt; // przyrost licznika w ms
+
+    if (t.counter >= 1000/30) { // 1 sekunda
+        t.counter = 0;
+        t.TF = 1;
+    }
+}
+
+function handleInterrupts() {
+    let EA = (state.IE & 0x80) !== 0;
+    let ET0 = (state.IE & 0x02) !== 0;
+    let t = state.timers.T0;
+
+    if (EA && ET0 && t.TF) {
+        t.TF = 0;
+        if (state.stack.length < 8) {           // zabezpieczenie
+            state.stack.push(state.pc);
+            state.sp++;
+        }
+        state.pc = 0x0B;   // skok do przerwania
+    }
+}
+    function updateUI() {
+        document.getElementById('reg-PC').innerText = state.pc;
+        document.getElementById('reg-SP').innerText = state.sp;
+        document.getElementById('reg-A').innerText = state.acc;
+        
+        const toBin = (v) => v.toString(2).padStart(8, '0') + 'b';
+        
+        document.getElementById('port-P2').innerText = state.ports.P2.toString(16).toUpperCase() + 'h (' + toBin(state.ports.P2) + ')';
+        document.getElementById('port-P3').innerText = state.ports.P3.toString(16).toUpperCase() + 'h (' + toBin(state.ports.P3) + ')';
+        
+        for(let i=0; i<8; i++) document.getElementById(`reg-R${i}`).innerText = state.regs[i];
+        
+        const ledOn = (state.ports.P3 & 0x10) === 0;
+        document.getElementById('led-p34').className = ledOn ? 'led on' : 'led';
+
+        const p2 = state.ports.P2;
+        const digitVal = p2 & 0x0F;
+        const sel = (p2 >> 4) & 0x03;
+        for(let i=0; i<4; i++) {
+    const el = document.getElementById(`dig-${i}`);
+    const dotEl = document.getElementById(`dot-${i}`);
+    if(i === sel) {
+        let digitToShow = (digitVal <= 9) ? digitVal.toString() : '0';
+        el.firstChild.textContent = digitToShow;
+        el.className = (digitVal <= 9) ? 'digit active' : 'digit'; // szare jeśli >9
+    } else el.className = 'digit';
+    dotEl.className = state.dotStates[i] ? 'dot active' : 'dot';
+}
+    }
+
+    function runLoop() {
+        if (!state.running) return;
+        let speed = parseInt(document.getElementById('speedRange').value);
+        if (speed < 0) {
+            for (let i = 0; i < 30 * (- speed); i++) { step(); if (!state.running) break; }
+            runTimeout = requestAnimationFrame(runLoop);
+        } else {
+            highlightLine(state.lineMap[state.pc]);
+            step();
+            runTimeout = setTimeout(runLoop, speed);
+        }
+    }
+
+    function toggleRun() {
+        state.running = !state.running;
+        document.getElementById('runBtn').innerText = state.running ? 'Stop' : 'Start';
+        if (state.running) runLoop();
+        else { clearTimeout(runTimeout); cancelAnimationFrame(runTimeout); }
+    }
+</script>
+</body>
+</html>
